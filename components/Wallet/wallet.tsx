@@ -96,6 +96,54 @@ const Wallet = () => {
 
   return (
     <div className="mx-auto h-full w-full max-w-6xl p-6">
+      {/* 导入导出区域 */}
+      <div className="rounded-lg bg-[#FFFFFF1A] mx-6 p-6">
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold">导入/导出功能</h2>
+          <div className="flex space-x-4">
+            <button
+              onClick={handleExportExcel}
+              disabled={wallets.length === 0}
+              className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              导出Excel
+            </button>
+            <button
+              onClick={handleFileSelect}
+              disabled={isImporting}
+              className="flex items-center space-x-2 rounded-md bg-purple-600 px-4 py-2 text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isImporting && (
+                <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  ></circle>
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+              )}
+              <span>{isImporting ? '导入中...' : '导入Excel'}</span>
+            </button>
+            <button
+              onClick={handleClearWallets}
+              disabled={wallets.length === 0}
+              className="rounded-md border border-red-600 px-4 py-2 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              清空导入
+            </button>
+          </div>
+          <input type="file" ref={fileInputRef} onChange={handleImportExcel} accept=".xlsx,.xls" className="hidden" />
+          <p className="text-sm">Excel格式要求：第一列为Address，第二列为Private Key，第一行为表头</p>
+        </div>
+      </div>
       <Tool />
       <div className="space-y-6">
         {/* 标题 */}
@@ -145,54 +193,7 @@ const Wallet = () => {
           </div>
         </div>
 
-        {/* 导入导出区域 */}
-        <div className="rounded-lg bg-[#FFFFFF1A] p-6">
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold">导入/导出功能</h2>
-            <div className="flex space-x-4">
-              <button
-                onClick={handleExportExcel}
-                disabled={wallets.length === 0}
-                className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                导出Excel
-              </button>
-              <button
-                onClick={handleFileSelect}
-                disabled={isImporting}
-                className="flex items-center space-x-2 rounded-md bg-purple-600 px-4 py-2 text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isImporting && (
-                  <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                )}
-                <span>{isImporting ? '导入中...' : '导入Excel'}</span>
-              </button>
-              <button
-                onClick={handleClearWallets}
-                disabled={wallets.length === 0}
-                className="rounded-md border border-red-600 px-4 py-2 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                清空列表
-              </button>
-            </div>
-            <input type="file" ref={fileInputRef} onChange={handleImportExcel} accept=".xlsx,.xls" className="hidden" />
-            <p className="text-sm">Excel格式要求：第一列为Address，第二列为Private Key，第一行为表头</p>
-          </div>
-        </div>
+
 
         {/* 钱包列表显示 */}
         {wallets.length > 0 && (

@@ -10,7 +10,6 @@ const NavigationBar = () => {
     const routes = [
       { path: '/', label: 'trade' },
       { path: '/wallet', label: 'wallet' },
-      { path: '/setting', label: 'setting' },
     ];
 
     return (
@@ -44,6 +43,10 @@ const NavigationBar = () => {
           </Link>
 
           <div className="flex items-center gap-x-10">{renderRouter()}</div>
+
+          <div className='w-full flex flex-row justify-end '>
+            <appkit-button />
+          </div>
         </div>
       </div>
     </Suspense>

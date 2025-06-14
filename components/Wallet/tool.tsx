@@ -4,7 +4,7 @@ import { useAccount, useBalance, useReadContract, useWriteContract, useWaitForTr
 import { formatEther, parseEther, parseUnits, erc20Abi, isAddress } from 'viem';
 import { toast } from 'sonner';
 import { useWalletData } from '@/hooks/useWalletData';
-import WalletDataStatus from '@/components/WalletDataStatus';
+import WalletDataStatus from '@/components/Wallet/WalletDataStatus';
 
 
 interface TokenBalance {
@@ -379,7 +379,6 @@ const Tool = () => {
               清除本地钱包数据
             </button>
           )}
-          <appkit-button />
         </div>
       </div>
 
