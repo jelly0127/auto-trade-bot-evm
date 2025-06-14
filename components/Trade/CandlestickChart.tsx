@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
+import { useChainId } from 'wagmi';
 
 interface CandleData {
   time: number;
@@ -31,6 +32,7 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
   onRefreshIntervalChange
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const chainId = useChainId();
   const [refreshInterval, setRefreshInterval] = useState(5);
   const [chartType, setChartType] = useState<'dexscreener' | 'custom'>('dexscreener');
   const [networkType, setNetworkType] = useState<NetworkType>('mainnet');
@@ -43,6 +45,47 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
     { value: 30, label: '30秒' },
     { value: 60, label: '60秒' }
   ];
+
+  // 网络ID到DEX Screener路径的映射
+  const getNetworkPath = (chainId: number) => {
+    const networkMap: { [key: number]: string } = {
+      1: 'ethereum',        // Ethereum Mainnet
+      56: 'bsc',           // BSC Mainnet
+      137: 'polygon',      // Polygon Mainnet
+      42161: 'arbitrum',   // Arbitrum One
+      10: 'optimism',      // Optimism Mainnet
+      43114: 'avalanche',  // Avalanche C-Chain
+      250: 'fantom',       // Fantom Opera
+      25: 'cronos',        // Cronos Mainnet
+      1666600000: 'harmony', // Harmony ONE
+      // 测试网
+      5: 'goerli',         // Goerli Testnet
+      97: 'bsc-testnet',   // BSC Testnet
+      80001: 'polygon-mumbai', // Polygon Mumbai
+    };
+
+    return networkMap[chainId] || null;
+  };
+
+  // 获取网络显示名称
+  const getNetworkDisplayName = (chainId: number) => {
+    const networkNames: { [key: number]: string } = {
+      1: 'Ethereum',
+      56: 'BSC',
+      137: 'Polygon',
+      42161: 'Arbitrum',
+      10: 'Optimism',
+      43114: 'Avalanche',
+      250: 'Fantom',
+      25: 'Cronos',
+      1666600000: 'Harmony',
+      5: 'Goerli',
+      97: 'BSC Testnet',
+      80001: 'Mumbai',
+    };
+
+    return networkNames[chainId] || `未知网络 (${chainId})`;
+  };
 
   // 检测网络和代币地址有效性
   useEffect(() => {
@@ -60,20 +103,14 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
         return;
       }
 
-      // 尝试检测是否为主网代币（简单检测）
-      try {
-        // 这里可以添加更复杂的网络检测逻辑
-        // 暂时假设所有有效地址都是主网
-        setIsValidAddress(true);
-        setNetworkType('mainnet');
-      } catch (error) {
-        setIsValidAddress(false);
-        setNetworkType('testnet');
-      }
+      // 根据chainId判断是否为测试网
+      const isTestnet = [5, 97, 80001].includes(chainId); // Goerli, BSC Testnet, Polygon Mumbai
+      setNetworkType(isTestnet ? 'testnet' : 'mainnet');
+      setIsValidAddress(true);
     };
 
     checkTokenAddress();
-  }, [tokenInfo.address]);
+  }, [tokenInfo.address, chainId]);
 
   // 根据网络类型自动选择图表类型
   // useEffect(() => {
@@ -88,8 +125,14 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
       return null;
     }
 
-    // BSC链的DEX Screener URL
-    const baseUrl = 'https://dexscreener.com/bsc';
+    // 获取当前网络对应的路径
+    const networkPath = getNetworkPath(chainId);
+    if (!networkPath) {
+      return null; // 不支持的网络
+    }
+
+    // 根据当前连接的网络生成DEX Screener URL
+    const baseUrl = `https://dexscreener.com/${networkPath}`;
     return `${baseUrl}/${tokenInfo.address}`;
   };
 
@@ -98,8 +141,12 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
     const dexUrl = getDexScreenerUrl();
     if (!dexUrl) return null;
 
+    // 获取当前网络对应的路径
+    const networkPath = getNetworkPath(chainId);
+    if (!networkPath) return null;
+
     // DEX Screener嵌入URL格式
-    return `https://dexscreener.com/bsc/${tokenInfo.address}?embed=1&theme=dark&trades=0&info=0`;
+    return `https://dexscreener.com/${networkPath}/${tokenInfo.address}?embed=1&theme=dark&trades=0&info=0`;
   };
 
   const handleRefreshIntervalChange = (newInterval: number) => {
@@ -280,8 +327,13 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
             <span className="font-mono">{tokenInfo.address.slice(0, 10)}...{tokenInfo.address.slice(-8)}</span>
             {/* <span className={`px-2 py-1 rounded text-xs ${networkType === 'mainnet' ? 'bg-green-600 text-white' : 'bg-yellow-600 text-white'
               }`}>
-              {networkType === 'mainnet' ? '主网' : '测试网'}
+              {getNetworkDisplayName(chainId)}
             </span> */}
+            {!getNetworkPath(chainId) && networkType === 'mainnet' && (
+              <span className="px-2 py-1 rounded text-xs bg-orange-600 text-white">
+                DEX不支持
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center space-x-4">

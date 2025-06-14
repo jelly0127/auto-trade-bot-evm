@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useCallback } from 'react';
+import { useChainId } from 'wagmi';
 import { toast } from 'sonner';
 import { useWalletData } from '@/hooks/useWalletData';
 import { priceService, type TokenPrice } from '@/lib/priceService';
@@ -25,6 +26,7 @@ const PriceStrategy: React.FC<PriceStrategyProps> = ({
   currentPrice,
   onTradeExecuted
 }) => {
+  const chainId = useChainId();
   const { wallets: importedWallets, hasWallets } = useWalletData();
 
   // 价格控制策略
@@ -108,7 +110,7 @@ const PriceStrategy: React.FC<PriceStrategyProps> = ({
       }
     };
 
-    priceService.subscribeToPrice(selectedToken.address, priceCallback, 3000);
+    priceService.subscribeToPrice(selectedToken.address, priceCallback, 3000, chainId);
 
     // 清理函数
     const cleanup = () => {

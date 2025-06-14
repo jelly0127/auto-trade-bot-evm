@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useChainId } from 'wagmi';
 import { toast } from 'sonner';
 import { useWalletData } from '@/hooks/useWalletData';
 import CandlestickChart from './CandlestickChart';
@@ -8,6 +8,7 @@ import TokenSelector from './TokenSelector';
 import PriceStrategy from './PriceStrategy';
 import VolumeBot from './VolumeBot';
 import NetworkStatusComponent from './NetworkStatus';
+import ApiStatus from './ApiStatus';
 import { priceService, type TokenPrice, type CandleData, formatPrice } from '@/lib/priceService';
 
 // 拉升/砸盘配置
@@ -20,6 +21,7 @@ interface PumpDumpConfig {
 
 const Trade = () => {
   const { address, isConnected } = useAccount();
+  const chainId = useChainId();
   const { wallets: importedWallets, hasWallets } = useWalletData();
 
   // 代币状态
@@ -59,7 +61,7 @@ const Trade = () => {
     // 启动价格订阅
     priceService.subscribeToPrice(token.address, (price) => {
       setCurrentPrice(formatPrice(price));
-    }, 5000);
+    }, 5000, chainId);
   };
 
   // 处理交易执行
@@ -270,7 +272,7 @@ const Trade = () => {
                 if (selectedToken) {
                   priceService.subscribeToPrice(selectedToken.address, (price) => {
                     setCurrentPrice(formatPrice(price));
-                  }, interval * 1000);
+                  }, interval * 1000, chainId);
                 }
               }}
             />

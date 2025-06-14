@@ -1,6 +1,7 @@
 'use client';
 import React, { useState } from 'react';
 import { isAddress } from 'viem';
+import { useChainId } from 'wagmi';
 import { toast } from 'sonner';
 import { useTokenStorage, type StoredToken } from '@/hooks/useTokenStorage';
 import { priceService, type TokenPrice } from '@/lib/priceService';
@@ -22,6 +23,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   selectedToken,
   onTokenSelect
 }) => {
+  const chainId = useChainId();
   const { storedTokens, addToken, removeToken, clearAllTokens, isTokenStored } = useTokenStorage();
   const [isLoading, setIsLoading] = useState(false);
   const { wallets: importedWallets, hasWallets } = useWalletData();
@@ -37,7 +39,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
     toast.info('正在查询代币信息，请稍候...', { duration: 3000 });
 
     try {
-      const tokenInfo = await priceService.getTokenInfo(tokenAddress);
+      const tokenInfo = await priceService.getTokenInfo(tokenAddress, chainId);
 
       if (tokenInfo) {
         onTokenSelect(tokenInfo);
@@ -50,13 +52,23 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
           }
         }
 
-        toast.success(`成功获取代币信息: ${tokenInfo.symbol}`);
+        toast.success(`✅ 成功获取代币信息: ${tokenInfo.symbol}`);
       } else {
-        toast.error('未找到代币信息，请检查地址是否正确或稍后重试');
+        toast.warning('⚠️ API数据获取失败，正在使用模拟数据进行演示', { duration: 4000 });
       }
     } catch (error) {
       console.error('获取代币信息失败:', error);
-      toast.error('获取代币信息失败，可能是网络问题或API限制，请稍后重试');
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+
+      if (errorMessage.includes('timeout')) {
+        toast.error('⏱️ 请求超时，请检查网络连接后重试');
+      } else if (errorMessage.includes('fetch failed')) {
+        toast.error('🌐 网络连接失败，请检查网络状态');
+      } else if (errorMessage.includes('Invalid address')) {
+        toast.error('❌ 代币地址格式无效，请检查输入');
+      } else {
+        toast.error(`❌ 获取代币信息失败: ${errorMessage}`);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -67,7 +79,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
     setTokenAddress(storedToken.address);
 
     // 获取最新价格信息
-    const tokenInfo = await priceService.getTokenInfo(storedToken.address);
+    const tokenInfo = await priceService.getTokenInfo(storedToken.address, chainId);
     if (tokenInfo) {
       onTokenSelect(tokenInfo);
     }

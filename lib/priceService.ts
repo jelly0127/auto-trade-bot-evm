@@ -134,10 +134,10 @@ class PriceService {
   private intervals: Map<string, NodeJS.Timeout> = new Map();
 
   // 获取代币信息
-  async getTokenInfo(address: string): Promise<TokenPrice | null> {
+  async getTokenInfo(address: string, chainId?: number): Promise<TokenPrice | null> {
     try {
       // 首先尝试从真实API获取数据
-      const realTokenInfo = await this.fetchRealTokenInfo(address);
+      const realTokenInfo = await this.fetchRealTokenInfo(address, chainId);
       if (realTokenInfo) {
         return realTokenInfo;
       }
@@ -157,47 +157,75 @@ class PriceService {
   }
 
   // 获取真实代币信息
-  private async fetchRealTokenInfo(address: string): Promise<TokenPrice | null> {
-    try {
-      // 尝试多个API源
-      const apiSources = [
-        () => this.fetchFromDexScreener(address),
-        () => this.fetchFromCoinGecko(address),
-        () => this.fetchFromMoralis(address)
-      ];
+  private async fetchRealTokenInfo(address: string, chainId?: number): Promise<TokenPrice | null> {
+    const apiSources = [
+      { name: 'DexScreener', fn: () => this.fetchFromDexScreener(address) },
+      { name: 'CoinGecko', fn: () => this.fetchFromCoinGecko(address, chainId) },
+      { name: 'Moralis', fn: () => this.fetchFromMoralis(address) }
+    ];
 
-      for (const fetchFn of apiSources) {
-        try {
-          const result = await fetchFn();
-          if (result) return result;
-        } catch (error) {
-          console.warn('API source failed, trying next...', error);
-          continue;
+    let lastError: Error | null = null;
+
+    for (const source of apiSources) {
+      try {
+        console.log(`尝试从 ${source.name} 获取代币信息...`);
+        const result = await source.fn();
+        if (result) {
+          console.log(`✅ 成功从 ${source.name} 获取代币信息`);
+          return result;
         }
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`❌ ${source.name} API 失败:`, error instanceof Error ? error.message : error);
+        continue;
       }
-      
-      return null;
-    } catch (error) {
-      console.error('所有API源都失败:', error);
-      return null;
     }
+    
+    console.warn('⚠️ 所有API源都失败，将使用模拟数据');
+    if (lastError) {
+      console.error('最后一个错误:', lastError.message);
+    }
+    
+    return null;
   }
 
-  // DexScreener API
+  // DexScreener API (通过代理)
   private async fetchFromDexScreener(address: string): Promise<TokenPrice | null> {
     try {
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
-      if (!response.ok) throw new Error('DexScreener API failed');
+      const response = await fetch(`/api/dexscreener?address=${address}`, {
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`DexScreener API failed: ${response.status} - ${errorData.error || 'Unknown error'}`);
+      }
       
       const data = await response.json();
+      
+      // 检查是否有错误信息
+      if (data.error) {
+        throw new Error(`DexScreener API error: ${data.error}`);
+      }
+      
       const pairs = data.pairs;
       
-      if (!pairs || pairs.length === 0) return null;
+      if (!pairs || pairs.length === 0) {
+        console.warn('DexScreener: 未找到交易对数据');
+        return null;
+      }
       
       // 取流动性最高的交易对
       const bestPair = pairs.reduce((best: any, current: any) => 
         (current.liquidity?.usd || 0) > (best.liquidity?.usd || 0) ? current : best
       );
+      
+      if (!bestPair.baseToken) {
+        console.warn('DexScreener: 交易对数据不完整');
+        return null;
+      }
       
       return {
         address: address.toLowerCase(),
@@ -211,23 +239,47 @@ class PriceService {
         holders: 0 // DexScreener doesn't provide holder count
       };
     } catch (error) {
-      console.error('DexScreener fetch failed:', error);
-      return null;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('DexScreener fetch failed:', errorMessage);
+      throw error; // 重新抛出错误，让上层处理
     }
   }
 
-  // CoinGecko API (备用)
-  private async fetchFromCoinGecko(address: string): Promise<TokenPrice | null> {
+  // CoinGecko API (备用，通过代理)
+  private async fetchFromCoinGecko(address: string, chainId?: number): Promise<TokenPrice | null> {
     try {
       // 检测链类型
-      const platform = this.detectPlatform(address);
+      const platform = this.detectPlatform(address, chainId);
       const response = await fetch(
-        `https://api.coingecko.com/api/v3/coins/${platform}/contract/${address}`
+        `/api/coingecko?address=${address}&platform=${platform}`,
+        {
+          headers: {
+            'Accept': 'application/json',
+          },
+        }
       );
       
-      if (!response.ok) throw new Error('CoinGecko API failed');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 404) {
+          console.warn('CoinGecko: 代币未找到');
+          return null;
+        }
+        throw new Error(`CoinGecko API failed: ${response.status} - ${errorData.error || 'Unknown error'}`);
+      }
       
       const data = await response.json();
+      
+      // 检查是否有错误信息
+      if (data.error) {
+        throw new Error(`CoinGecko API error: ${data.error}`);
+      }
+      
+      // 验证必要的数据字段
+      if (!data.market_data) {
+        console.warn('CoinGecko: 缺少市场数据');
+        return null;
+      }
       
       return {
         address: address.toLowerCase(),
@@ -241,8 +293,9 @@ class PriceService {
         holders: 0
       };
     } catch (error) {
-      console.error('CoinGecko fetch failed:', error);
-      return null;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('CoinGecko fetch failed:', errorMessage);
+      throw error; // 重新抛出错误，让上层处理
     }
   }
 
@@ -259,12 +312,26 @@ class PriceService {
   }
 
   // 检测区块链平台
-  private detectPlatform(address: string): string {
-    // 根据地址特征判断链类型
+  private detectPlatform(address: string, chainId?: number): string {
+    // 根据chainId判断链类型
+    if (chainId) {
+      const platformMap: { [key: number]: string } = {
+        1: 'ethereum',
+        56: 'binance-smart-chain',
+        137: 'polygon-pos',
+        42161: 'arbitrum-one',
+        10: 'optimistic-ethereum',
+        43114: 'avalanche',
+        250: 'fantom',
+        25: 'cronos',
+      };
+      
+      return platformMap[chainId] || 'binance-smart-chain';
+    }
+    
+    // 如果没有chainId，根据地址特征判断（默认BSC）
     if (address.startsWith('0x')) {
-      // 这里可以添加更多链的检测逻辑
-      // 暂时默认为ethereum，实际应该根据用户选择或其他方式判断
-      return 'binance-smart-chain'; // BSC
+      return 'binance-smart-chain';
     }
     return 'ethereum';
   }
@@ -286,7 +353,7 @@ class PriceService {
   }
 
   // 订阅价格更新
-  subscribeToPrice(address: string, callback: (price: number) => void, intervalMs: number = 5000) {
+  subscribeToPrice(address: string, callback: (price: number) => void, intervalMs: number = 5000, chainId?: number) {
     if (!this.subscribers.has(address)) {
       this.subscribers.set(address, []);
     }
@@ -296,7 +363,7 @@ class PriceService {
     // 如果这是第一个订阅者，启动价格更新
     if (!this.intervals.has(address)) {
       const interval = setInterval(async () => {
-        const tokenInfo = await this.getTokenInfo(address);
+        const tokenInfo = await this.getTokenInfo(address, chainId);
         if (tokenInfo && this.subscribers.has(address)) {
           this.subscribers.get(address)!.forEach(cb => cb(tokenInfo.price));
         }
