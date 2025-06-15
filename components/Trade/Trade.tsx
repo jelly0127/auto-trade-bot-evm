@@ -3,10 +3,12 @@ import React, { useState, useEffect } from 'react';
 import { useAccount, useChainId } from 'wagmi';
 import { toast } from 'sonner';
 import { useWalletData } from '@/hooks/useWalletData';
+import { useTradeHistory, type TradeRecord } from '@/hooks/useTradeHistory';
 import CandlestickChart from './CandlestickChart';
 import TokenSelector from './TokenSelector';
 import PriceStrategy from './PriceStrategy';
 import VolumeBot from './VolumeBot';
+import TradeHistoryStats from './TradeHistoryStats';
 import NetworkStatusComponent from './NetworkStatus';
 import ApiStatus from './ApiStatus';
 import { priceService, type TokenPrice, type CandleData, formatPrice } from '@/lib/priceService';
@@ -23,15 +25,21 @@ const Trade = () => {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { wallets: importedWallets, hasWallets } = useWalletData();
+  const {
+    tradeHistory,
+    addTrade,
+    clearHistory,
+    getHistoryByToken,
+    exportHistory,
+    importHistory,
+    historyCount
+  } = useTradeHistory();
 
   // 代币状态
   const [selectedToken, setSelectedToken] = useState<TokenPrice | null>(null);
   const [tokenAddress, setTokenAddress] = useState('');
   const [currentPrice, setCurrentPrice] = useState('0');
   const [priceData, setPriceData] = useState<CandleData[]>([]);
-
-  // 交易历史
-  const [tradeHistory, setTradeHistory] = useState<any[]>([]);
 
   // 拉升砸盘状态
   const [isPumping, setIsPumping] = useState(false);
@@ -66,7 +74,20 @@ const Trade = () => {
 
   // 处理交易执行
   const handleTradeExecuted = (trade: any) => {
-    setTradeHistory(prev => [trade, ...prev.slice(0, 49)]);
+    // 转换为完整的交易记录格式
+    const tradeRecord: Omit<TradeRecord, 'id'> = {
+      type: trade.type,
+      amount: trade.amount,
+      price: trade.price,
+      timestamp: trade.timestamp,
+      wallet: trade.wallet,
+      tokenAddress: selectedToken?.address,
+      tokenSymbol: selectedToken?.symbol,
+      chainId: chainId,
+      status: 'success'
+    };
+
+    addTrade(tradeRecord);
   };
 
   // 拉升钱包选择切换
@@ -280,20 +301,67 @@ const Trade = () => {
         )}
         {/* 交易历史 */}
         <div className="rounded-lg bg-[#FFFFFF1A] p-6 w-1/3">
-          <h2 className="text-lg font-semibold mb-4">交易历史</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">交易历史</h2>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-gray-400">共 {historyCount} 条</span>
+              <button
+                onClick={() => {
+                  if (confirm('确定要清空所有交易历史吗？此操作不可恢复。')) {
+                    clearHistory();
+                    toast.success('交易历史已清空');
+                  }
+                }}
+                disabled={historyCount === 0}
+                className="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                title="清空交易历史"
+              >
+                清空
+              </button>
+            </div>
+          </div>
+
+          {/* 筛选器 */}
+          {selectedToken && historyCount > 0 && (
+            <div className="mb-3">
+              <div className="flex items-center space-x-2 text-xs">
+                <span className="text-gray-400">筛选:</span>
+                <button
+                  onClick={() => {
+                    const tokenHistory = getHistoryByToken(selectedToken.address);
+                    console.log(`当前代币 ${selectedToken.symbol} 的交易记录:`, tokenHistory);
+                    toast.info(`当前代币共有 ${tokenHistory.length} 条交易记录`);
+                  }}
+                  className="rounded-md bg-blue-600/20 px-2 py-1 text-blue-400 hover:bg-blue-600/30"
+                >
+                  仅显示 {selectedToken.symbol}
+                </button>
+                <span className="text-gray-500">|</span>
+                <span className="text-gray-400">共 {getHistoryByToken(selectedToken.address).length} 条</span>
+              </div>
+            </div>
+          )}
+
           <div className="max-h-80 overflow-y-auto">
             {tradeHistory.length === 0 ? (
               <p className="text-center text-gray-400 text-sm">暂无交易记录</p>
             ) : (
               <div className="space-y-2">
-                {tradeHistory.map((trade, index) => (
-                  <div key={index} className="rounded-lg border border-gray-700 p-3 text-xs">
+                {tradeHistory.slice(0, 50).map((trade) => (
+                  <div key={trade.id} className="rounded-lg border border-gray-700 p-3 text-xs">
                     <div className="flex justify-between items-center">
-                      <span className={`font-semibold ${trade.type.includes('BUY') ? 'text-green-500' : 'text-red-500'
-                        }`}>
-                        {trade.type}
-                      </span>
-                      <span className="text-gray-400">{trade.timestamp}</span>
+                      <div className="flex items-center space-x-2">
+                        <span className={`font-semibold ${trade.type.includes('BUY') ? 'text-green-500' : 'text-red-500'
+                          }`}>
+                          {trade.type}
+                        </span>
+                        {trade.tokenSymbol && (
+                          <span className="text-blue-400 text-xs">
+                            {trade.tokenSymbol}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-gray-400">{new Date(trade.timestamp).toLocaleString()}</span>
                     </div>
                     <div className="mt-1 space-y-1">
                       <div className="flex justify-between">
@@ -308,12 +376,76 @@ const Trade = () => {
                         <span>钱包:</span>
                         <span className="font-mono">{trade.wallet.slice(0, 8)}...</span>
                       </div>
+                      {trade.status && (
+                        <div className="flex justify-between">
+                          <span>状态:</span>
+                          <span className={`text-xs ${trade.status === 'success' ? 'text-green-400' :
+                            trade.status === 'pending' ? 'text-yellow-400' : 'text-red-400'
+                            }`}>
+                            {trade.status === 'success' ? '成功' :
+                              trade.status === 'pending' ? '等待中' : '失败'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
+
+          {/* 交易历史操作 */}
+          {historyCount > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-600">
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => {
+                    const data = exportHistory();
+                    const blob = new Blob([data], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `trade-history-${new Date().toISOString().slice(0, 10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    toast.success('交易历史已导出');
+                  }}
+                  className="flex-1 rounded-md bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700"
+                >
+                  导出
+                </button>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        const data = event.target?.result as string;
+                        if (importHistory(data)) {
+                          toast.success('交易历史导入成功');
+                        } else {
+                          toast.error('导入失败，文件格式不正确');
+                        }
+                      };
+                      reader.readAsText(file);
+                    }
+                    // 清空input值，允许重复选择同一文件
+                    e.target.value = '';
+                  }}
+                  className="hidden"
+                  id="import-history"
+                />
+                <button
+                  onClick={() => document.getElementById('import-history')?.click()}
+                  className="flex-1 rounded-md bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700"
+                >
+                  导入
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -531,6 +663,16 @@ const Trade = () => {
         </div>
       </div>
 
+      {/* 交易统计 */}
+      {historyCount > 0 && (
+        <div className="mt-6">
+          <TradeHistoryStats
+            tradeHistory={tradeHistory}
+            selectedTokenAddress={selectedToken?.address}
+          />
+        </div>
+      )}
+
       {/* 使用说明 */}
       <div className="mt-6 rounded-lg bg-[#FFFFFF1A] p-6">
         <h2 className="text-lg font-semibold text-blue-400 mb-3">功能说明</h2>
@@ -539,10 +681,12 @@ const Trade = () => {
             <p><strong>💾 代币管理:</strong> 自动保存输入的代币地址，支持快速切换</p>
             <p><strong>📊 价格控制:</strong> 设置买入/卖出阈值，系统自动监控并执行交易</p>
             <p><strong>📈 K线图表:</strong> 实时显示价格走势，可调整刷新频率</p>
+            <p><strong>📋 交易历史:</strong> 自动保存所有交易记录到本地存储，支持导入导出</p>
           </div>
           <div>
             <p><strong>🚀 拉升砸盘:</strong> 批量账户协同操作，影响代币价格走势</p>
             <p><strong>🤖 刷单功能:</strong> 自动生成交易，增加代币交易量和活跃度</p>
+            <p><strong>📊 数据统计:</strong> 实时分析交易数据，提供详细的统计信息</p>
             <p><strong>⚠️ 风险提示:</strong> 请在测试网络充分测试后再使用真实资金</p>
           </div>
         </div>
