@@ -97,7 +97,7 @@ const Trade = () => {
     // 启动价格订阅 - 使用选择的链ID
     priceService.subscribeToPrice(token.address, (price) => {
       setCurrentPrice(formatPrice(price));
-    }, 5000, selectedChainId);
+    }, 3000, selectedChainId);
   };
 
   // 处理交易执行
@@ -253,7 +253,7 @@ const Trade = () => {
           const actualIncrease = ((finalPrice - startPrice) / startPrice * 100).toFixed(2);
 
           toast.success(`拉升完成！成功: ${successCount}笔，失败: ${failCount}笔，价格变化: ${actualIncrease}%`, {
-            duration: 5000
+            duration: 3000
           });
 
           console.log(`📊 拉升统计: 成功 ${successCount}笔, 失败 ${failCount}笔, 价格从 $${startPrice} 到 $${finalPrice} (${actualIncrease}%)`);
@@ -407,7 +407,7 @@ const Trade = () => {
           const actualDecrease = ((startPrice - finalPrice) / startPrice * 100).toFixed(2);
 
           toast.success(`砸盘完成！成功: ${successCount}笔，失败: ${failCount}笔，价格变化: -${actualDecrease}%`, {
-            duration: 5000
+            duration: 3000
           });
 
           console.log(`📊 砸盘统计: 成功 ${successCount}笔, 失败 ${failCount}笔, 价格从 $${startPrice} 到 $${finalPrice} (-${actualDecrease}%)`);

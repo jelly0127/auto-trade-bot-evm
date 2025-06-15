@@ -144,7 +144,7 @@ const NetworkStatusComponent: React.FC<NetworkStatusProps> = ({ className = '' }
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         checkNetworkStatus();
       }
-    }, 5000); // 每5秒检测一次
+    }, 3000); // 每3秒检测一次
 
     return () => clearInterval(interval);
   }, [autoCheck]);

@@ -170,7 +170,7 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
 
     // 显示结果统计
     toast.success(`批量卖出完成！成功: ${successCount}笔，失败: ${failCount}笔`, {
-      duration: 5000
+      duration: 3000
     });
 
     console.log(`📊 批量卖出统计: 成功 ${successCount}笔, 失败 ${failCount}笔`);

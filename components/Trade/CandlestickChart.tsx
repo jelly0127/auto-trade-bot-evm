@@ -33,7 +33,7 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chainId = useChainId();
-  const [refreshInterval, setRefreshInterval] = useState(5);
+  const [refreshInterval, setRefreshInterval] = useState(3);
   const [chartType, setChartType] = useState<'dexscreener' | 'custom'>('dexscreener');
   const [networkType, setNetworkType] = useState<NetworkType>('mainnet');
   const [isValidAddress, setIsValidAddress] = useState(false);
@@ -65,26 +65,6 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
     };
 
     return networkMap[chainId] || null;
-  };
-
-  // 获取网络显示名称
-  const getNetworkDisplayName = (chainId: number) => {
-    const networkNames: { [key: number]: string } = {
-      1: 'Ethereum',
-      56: 'BSC',
-      137: 'Polygon',
-      42161: 'Arbitrum',
-      10: 'Optimism',
-      43114: 'Avalanche',
-      250: 'Fantom',
-      25: 'Cronos',
-      1666600000: 'Harmony',
-      5: 'Goerli',
-      97: 'BSC Testnet',
-      80001: 'Mumbai',
-    };
-
-    return networkNames[chainId] || `未知网络 (${chainId})`;
   };
 
   // 检测网络和代币地址有效性
