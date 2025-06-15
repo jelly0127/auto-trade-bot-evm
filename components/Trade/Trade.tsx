@@ -179,6 +179,20 @@ const Trade = () => {
     toast.info('砸盘已取消选择所有钱包');
   };
 
+  // 获取钱包私钥的辅助函数
+  const getWalletPrivateKey = (walletAddress: string): string => {
+    if (!importedWallets) {
+      throw new Error('钱包数据未导入');
+    }
+
+    const wallet = importedWallets.find(w => w.address === walletAddress);
+    if (!wallet) {
+      throw new Error(`找不到钱包: ${walletAddress}`);
+    }
+
+    return wallet.privateKey;
+  };
+
   // 执行拉升
   const executePump = async () => {
     if (!selectedToken) {
@@ -191,75 +205,145 @@ const Trade = () => {
       return;
     }
 
-    setIsPumping(true);
-    const selectedWallets = pumpConfig.selectedWallets;
+    const percentage = parseFloat(pumpConfig.percentage);
     const duration = parseInt(pumpConfig.duration) || 10;
 
-    toast.success(`开始拉升 ${pumpConfig.percentage}%，使用 ${selectedWallets.length} 个钱包，持续 ${duration} 分钟`);
+    if (percentage <= 0 || percentage > 1000) {
+      toast.error('拉升百分比必须在1-1000之间');
+      return;
+    }
+
+    if (duration <= 0 || duration > 1440) {
+      toast.error('持续时间必须在1-1440分钟之间');
+      return;
+    }
+
+    // 主网交易确认
+    const isMainnet = !networkConfig.isTestnet;
+    if (isMainnet) {
+      const confirmMessage = `⚠️ 警告: 您即将在${networkConfig.name}主网上执行拉升操作!\n\n这将使用真实资金进行交易:\n• 拉升目标: ${percentage}%\n• 持续时间: ${duration}分钟\n• 使用钱包: ${pumpConfig.selectedWallets.length}个\n• 当前价格: $${currentPrice}\n• 目标价格: $${(parseFloat(currentPrice) * (1 + percentage / 100)).toFixed(6)}\n\n确定要继续吗?`;
+
+      if (!confirm(confirmMessage)) {
+        return;
+      }
+    }
+
+    setIsPumping(true);
+    const selectedWallets = pumpConfig.selectedWallets;
+    const startPrice = parseFloat(currentPrice);
+    const targetPrice = startPrice * (1 + percentage / 100);
+
+    console.log(`🚀 开始拉升: 从 $${startPrice} 拉升到 $${targetPrice.toFixed(6)} (+${percentage}%)`);
+    toast.success(`开始拉升 ${percentage}%，目标价格: $${targetPrice.toFixed(6)}，使用 ${selectedWallets.length} 个钱包，持续 ${duration} 分钟`);
 
     try {
-      // 使用选中的钱包进行拉升
-      selectedWallets.forEach((walletAddress, i) => {
-        const buyAmount = (Math.random() * 0.01 + 0.001).toFixed(6);
+      const totalTrades = selectedWallets.length * Math.ceil(duration / 2); // 每2分钟一轮交易
+      const intervalMs = (duration * 60 * 1000) / totalTrades; // 计算交易间隔
 
-        setTimeout(async () => {
-          try {
-            // 执行真实的区块链交易
-            const txHash = await executeBlockchainTrade({
-              tokenAddress: selectedToken!.address,
-              amount: buyAmount,
-              tradeType: 'BUY',
-              walletPrivateKey: 'YOUR_WALLET_PRIVATE_KEY', // 需要实现安全的私钥获取
-              chainId: selectedChainId
+      let tradeIndex = 0;
+      let successCount = 0;
+      let failCount = 0;
+
+      const pumpInterval = setInterval(async () => {
+        if (tradeIndex >= totalTrades || !isPumping) {
+          clearInterval(pumpInterval);
+          setIsPumping(false);
+
+          const finalPrice = parseFloat(currentPrice);
+          const actualIncrease = ((finalPrice - startPrice) / startPrice * 100).toFixed(2);
+
+          toast.success(`拉升完成！成功: ${successCount}笔，失败: ${failCount}笔，价格变化: ${actualIncrease}%`, {
+            duration: 5000
+          });
+
+          console.log(`📊 拉升统计: 成功 ${successCount}笔, 失败 ${failCount}笔, 价格从 $${startPrice} 到 $${finalPrice} (${actualIncrease}%)`);
+          return;
+        }
+
+        const walletIndex = tradeIndex % selectedWallets.length;
+        const walletAddress = selectedWallets[walletIndex];
+
+        // 根据当前价格和目标价格动态调整买入金额
+        const currentPriceNum = parseFloat(currentPrice);
+        const priceGap = targetPrice - currentPriceNum;
+        const progressRatio = Math.min(tradeIndex / totalTrades, 1);
+
+        // 动态买入金额：开始时较大，接近目标时较小
+        const baseAmount = 0.001 + (priceGap / targetPrice) * 0.01;
+        const randomFactor = 0.5 + Math.random() * 1.0; // 0.5-1.5倍随机因子
+        const buyAmount = (baseAmount * randomFactor * (1 - progressRatio * 0.5)).toFixed(6);
+
+        try {
+          console.log(`🔄 [${tradeIndex + 1}/${totalTrades}] 拉升买入: ${walletAddress.slice(0, 8)}... - ${buyAmount} ${networkConfig.nativeCurrency.symbol}`);
+          console.log(`📊 当前价格: $${currentPriceNum}, 目标价格: $${targetPrice.toFixed(6)}, 进度: ${(progressRatio * 100).toFixed(1)}%`);
+
+          // 执行真实的区块链交易
+          const txHash = await executeBlockchainTrade({
+            tokenAddress: selectedToken!.address,
+            amount: buyAmount,
+            tradeType: 'BUY',
+            walletPrivateKey: getWalletPrivateKey(walletAddress),
+            chainId: selectedChainId
+          });
+
+          const trade = createTradeRecord({
+            type: 'PUMP_BUY',
+            amount: buyAmount,
+            price: currentPrice,
+            wallet: walletAddress,
+            tokenAddress: selectedToken!.address,
+            tokenSymbol: selectedToken!.symbol,
+            chainId: selectedChainId,
+            txHash: txHash,
+            status: 'success'
+          });
+
+          handleTradeExecuted(trade);
+          successCount++;
+
+          // 30%概率显示成功提示
+          if (Math.random() < 0.3) {
+            toast.success(`拉升买入成功: ${buyAmount} ${networkConfig.nativeCurrency.symbol}`, {
+              duration: 1500,
+              description: `钱包: ${walletAddress.slice(0, 8)}... | 交易: ${txHash.slice(0, 10)}...`
             });
-
-            const trade = createTradeRecord({
-              type: 'PUMP_BUY',
-              amount: buyAmount,
-              price: currentPrice,
-              wallet: walletAddress,
-              tokenAddress: selectedToken!.address,
-              tokenSymbol: selectedToken!.symbol,
-              chainId: selectedChainId,
-              txHash: txHash,
-              status: 'success'
-            });
-
-            handleTradeExecuted(trade);
-            toast.success(`钱包 ${walletAddress.slice(0, 8)}... 拉升买入成功 ${buyAmount}`, {
-              duration: 2000,
-              description: `交易哈希: ${txHash.slice(0, 10)}...`
-            });
-          } catch (error) {
-            console.error('拉升交易失败:', error);
-
-            // 记录失败的交易
-            const failedTrade = createTradeRecord({
-              type: 'PUMP_BUY',
-              amount: buyAmount,
-              price: currentPrice,
-              wallet: walletAddress,
-              tokenAddress: selectedToken!.address,
-              tokenSymbol: selectedToken!.symbol,
-              chainId: selectedChainId,
-              txHash: 'failed',
-              status: 'failed'
-            });
-
-            handleTradeExecuted(failedTrade);
-            toast.error(`钱包 ${walletAddress.slice(0, 8)}... 拉升买入失败`, { duration: 2000 });
           }
-        }, i * 2000);
-      });
 
-      setTimeout(() => {
-        setIsPumping(false);
-        toast.success('拉升完成');
-      }, duration * 60 * 1000);
+        } catch (error) {
+          console.error(`❌ [${tradeIndex + 1}] 拉升买入失败:`, error);
+          failCount++;
+
+          // 记录失败的交易
+          const failedTrade = createTradeRecord({
+            type: 'PUMP_BUY',
+            amount: buyAmount,
+            price: currentPrice,
+            wallet: walletAddress,
+            tokenAddress: selectedToken!.address,
+            tokenSymbol: selectedToken!.symbol,
+            chainId: selectedChainId,
+            txHash: 'failed',
+            status: 'failed'
+          });
+
+          handleTradeExecuted(failedTrade);
+
+          // 20%概率显示错误提示
+          if (Math.random() < 0.2) {
+            toast.error(`拉升买入失败: ${error instanceof Error ? error.message : '未知错误'}`, {
+              duration: 2000,
+              description: `钱包: ${walletAddress.slice(0, 8)}...`
+            });
+          }
+        }
+
+        tradeIndex++;
+      }, intervalMs);
 
     } catch (error) {
       setIsPumping(false);
-      toast.error('拉升失败');
+      console.error('拉升执行失败:', error);
+      toast.error(`拉升执行失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
   };
 
@@ -275,76 +359,159 @@ const Trade = () => {
       return;
     }
 
-    setIsDumping(true);
-    const selectedWallets = dumpConfig.selectedWallets;
+    const percentage = parseFloat(dumpConfig.percentage);
     const duration = parseInt(dumpConfig.duration) || 10;
 
-    toast.success(`开始砸盘 ${dumpConfig.percentage}%，使用 ${selectedWallets.length} 个钱包，持续 ${duration} 分钟`);
+    if (percentage <= 0 || percentage > 99) {
+      toast.error('砸盘百分比必须在1-99之间');
+      return;
+    }
+
+    if (duration <= 0 || duration > 1440) {
+      toast.error('持续时间必须在1-1440分钟之间');
+      return;
+    }
+
+    // 主网交易确认
+    const isMainnet = !networkConfig.isTestnet;
+    if (isMainnet) {
+      const confirmMessage = `⚠️ 警告: 您即将在${networkConfig.name}主网上执行砸盘操作!\n\n这将使用真实资金进行交易:\n• 砸盘目标: -${percentage}%\n• 持续时间: ${duration}分钟\n• 使用钱包: ${dumpConfig.selectedWallets.length}个\n• 当前价格: $${currentPrice}\n• 目标价格: $${(parseFloat(currentPrice) * (1 - percentage / 100)).toFixed(6)}\n\n确定要继续吗?`;
+
+      if (!confirm(confirmMessage)) {
+        return;
+      }
+    }
+
+    setIsDumping(true);
+    const selectedWallets = dumpConfig.selectedWallets;
+    const startPrice = parseFloat(currentPrice);
+    const targetPrice = startPrice * (1 - percentage / 100);
+
+    console.log(`💥 开始砸盘: 从 $${startPrice} 砸到 $${targetPrice.toFixed(6)} (-${percentage}%)`);
+    toast.success(`开始砸盘 ${percentage}%，目标价格: $${targetPrice.toFixed(6)}，使用 ${selectedWallets.length} 个钱包，持续 ${duration} 分钟`);
 
     try {
-      // 使用选中的钱包进行砸盘
-      selectedWallets.forEach((walletAddress, i) => {
-        const sellAmount = (Math.random() * 0.01 + 0.001).toFixed(6);
+      const totalTrades = selectedWallets.length * Math.ceil(duration / 2); // 每2分钟一轮交易
+      const intervalMs = (duration * 60 * 1000) / totalTrades; // 计算交易间隔
 
-        setTimeout(async () => {
-          try {
-            // 执行真实的区块链交易
-            const txHash = await executeBlockchainTrade({
-              tokenAddress: selectedToken!.address,
-              amount: sellAmount,
-              tradeType: 'SELL',
-              walletPrivateKey: 'YOUR_WALLET_PRIVATE_KEY', // 需要实现安全的私钥获取
-              chainId: selectedChainId
+      let tradeIndex = 0;
+      let successCount = 0;
+      let failCount = 0;
+
+      const dumpInterval = setInterval(async () => {
+        if (tradeIndex >= totalTrades || !isDumping) {
+          clearInterval(dumpInterval);
+          setIsDumping(false);
+
+          const finalPrice = parseFloat(currentPrice);
+          const actualDecrease = ((startPrice - finalPrice) / startPrice * 100).toFixed(2);
+
+          toast.success(`砸盘完成！成功: ${successCount}笔，失败: ${failCount}笔，价格变化: -${actualDecrease}%`, {
+            duration: 5000
+          });
+
+          console.log(`📊 砸盘统计: 成功 ${successCount}笔, 失败 ${failCount}笔, 价格从 $${startPrice} 到 $${finalPrice} (-${actualDecrease}%)`);
+          return;
+        }
+
+        const walletIndex = tradeIndex % selectedWallets.length;
+        const walletAddress = selectedWallets[walletIndex];
+
+        // 根据当前价格和目标价格动态调整卖出金额
+        const currentPriceNum = parseFloat(currentPrice);
+        const priceGap = currentPriceNum - targetPrice;
+        const progressRatio = Math.min(tradeIndex / totalTrades, 1);
+
+        // 动态卖出金额：开始时较大，接近目标时较小
+        // 砸盘使用代币数量而不是原生代币数量
+        const baseTokenAmount = 1000 + (priceGap / currentPriceNum) * 10000;
+        const randomFactor = 0.5 + Math.random() * 1.0; // 0.5-1.5倍随机因子
+        const sellAmount = (baseTokenAmount * randomFactor * (1 - progressRatio * 0.5)).toFixed(0);
+
+        try {
+          console.log(`🔄 [${tradeIndex + 1}/${totalTrades}] 砸盘卖出: ${walletAddress.slice(0, 8)}... - ${sellAmount} ${selectedToken.symbol}`);
+          console.log(`📊 当前价格: $${currentPriceNum}, 目标价格: $${targetPrice.toFixed(6)}, 进度: ${(progressRatio * 100).toFixed(1)}%`);
+
+          // 执行真实的区块链交易
+          const txHash = await executeBlockchainTrade({
+            tokenAddress: selectedToken!.address,
+            amount: sellAmount,
+            tradeType: 'SELL',
+            walletPrivateKey: getWalletPrivateKey(walletAddress),
+            chainId: selectedChainId
+          });
+
+          const trade = createTradeRecord({
+            type: 'DUMP_SELL',
+            amount: sellAmount,
+            price: currentPrice,
+            wallet: walletAddress,
+            tokenAddress: selectedToken!.address,
+            tokenSymbol: selectedToken!.symbol,
+            chainId: selectedChainId,
+            txHash: txHash,
+            status: 'success'
+          });
+
+          handleTradeExecuted(trade);
+          successCount++;
+
+          // 30%概率显示成功提示
+          if (Math.random() < 0.3) {
+            toast.success(`砸盘卖出成功: ${sellAmount} ${selectedToken.symbol}`, {
+              duration: 1500,
+              description: `钱包: ${walletAddress.slice(0, 8)}... | 交易: ${txHash.slice(0, 10)}...`
             });
-
-            const trade = createTradeRecord({
-              type: 'DUMP_SELL',
-              amount: sellAmount,
-              price: currentPrice,
-              wallet: walletAddress,
-              tokenAddress: selectedToken!.address,
-              tokenSymbol: selectedToken!.symbol,
-              chainId: selectedChainId,
-              txHash: txHash,
-              status: 'success'
-            });
-
-            handleTradeExecuted(trade);
-            toast.success(`钱包 ${walletAddress.slice(0, 8)}... 砸盘卖出成功 ${sellAmount}`, {
-              duration: 2000,
-              description: `交易哈希: ${txHash.slice(0, 10)}...`
-            });
-          } catch (error) {
-            console.error('砸盘交易失败:', error);
-
-            // 记录失败的交易
-            const failedTrade = createTradeRecord({
-              type: 'DUMP_SELL',
-              amount: sellAmount,
-              price: currentPrice,
-              wallet: walletAddress,
-              tokenAddress: selectedToken!.address,
-              tokenSymbol: selectedToken!.symbol,
-              chainId: selectedChainId,
-              txHash: 'failed',
-              status: 'failed'
-            });
-
-            handleTradeExecuted(failedTrade);
-            toast.error(`钱包 ${walletAddress.slice(0, 8)}... 砸盘卖出失败`, { duration: 2000 });
           }
-        }, i * 2000);
-      });
 
-      setTimeout(() => {
-        setIsDumping(false);
-        toast.success('砸盘完成');
-      }, duration * 60 * 1000);
+        } catch (error) {
+          console.error(`❌ [${tradeIndex + 1}] 砸盘卖出失败:`, error);
+          failCount++;
+
+          // 记录失败的交易
+          const failedTrade = createTradeRecord({
+            type: 'DUMP_SELL',
+            amount: sellAmount,
+            price: currentPrice,
+            wallet: walletAddress,
+            tokenAddress: selectedToken!.address,
+            tokenSymbol: selectedToken!.symbol,
+            chainId: selectedChainId,
+            txHash: 'failed',
+            status: 'failed'
+          });
+
+          handleTradeExecuted(failedTrade);
+
+          // 20%概率显示错误提示
+          if (Math.random() < 0.2) {
+            toast.error(`砸盘卖出失败: ${error instanceof Error ? error.message : '未知错误'}`, {
+              duration: 2000,
+              description: `钱包: ${walletAddress.slice(0, 8)}...`
+            });
+          }
+        }
+
+        tradeIndex++;
+      }, intervalMs);
 
     } catch (error) {
       setIsDumping(false);
-      toast.error('砸盘失败');
+      console.error('砸盘执行失败:', error);
+      toast.error(`砸盘执行失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
+  };
+
+  // 停止拉升
+  const stopPump = () => {
+    setIsPumping(false);
+    toast.info('拉升操作已手动停止');
+  };
+
+  // 停止砸盘
+  const stopDump = () => {
+    setIsDumping(false);
+    toast.info('砸盘操作已手动停止');
   };
 
   // 组件卸载时清理
@@ -372,22 +539,14 @@ const Trade = () => {
 
       {/* 网络选择和代币选择 */}
       <div className='flex flex-row gap-x-6 items-start'>
-        {/* 网络选择器 */}
-        <div className="flex flex-col space-y-2">
-          <label className="text-sm font-medium text-gray-300">选择网络</label>
-          <NetworkSelector
-            selectedChainId={selectedChainId}
-            onNetworkChange={handleNetworkChange}
-            showTestnets={true}
-          />
-          <div className="text-xs text-gray-400">
-            当前: {networkConfig.name}
-          </div>
-        </div>
+
 
         {/* 代币选择器 */}
         <div className="flex-1">
           <TokenSelector
+            networkConfig={networkConfig}
+            selectedChainId={selectedChainId}
+            handleNetworkChange={handleNetworkChange}
             address={address}
             tokenAddress={tokenAddress}
             setTokenAddress={setTokenAddress}
@@ -724,13 +883,41 @@ const Trade = () => {
               </div>
             )}
 
-            <button
-              onClick={executePump}
-              disabled={!selectedToken || isPumping || pumpConfig.selectedWallets.length === 0}
-              className="w-full rounded-md bg-orange-600 cursor-pointer px-4 py-2 text-white hover:bg-orange-700 disabled:opacity-50"
-            >
-              {isPumping ? '拉升中...' : '开始拉升'}
-            </button>
+            <div className="flex space-x-2">
+              <button
+                onClick={executePump}
+                disabled={!selectedToken || isPumping || pumpConfig.selectedWallets.length === 0 || !pumpConfig.percentage || !pumpConfig.duration}
+                className="flex-1 rounded-md bg-orange-600 cursor-pointer px-4 py-2 text-white hover:bg-orange-700 disabled:opacity-50"
+              >
+                {isPumping ? '拉升中...' : '🚀 开始拉升'}
+              </button>
+              {isPumping && (
+                <button
+                  onClick={stopPump}
+                  className="rounded-md bg-gray-600 cursor-pointer px-4 py-2 text-white hover:bg-gray-700"
+                >
+                  停止
+                </button>
+              )}
+            </div>
+
+            {/* 拉升状态显示 */}
+            {isPumping && (
+              <div className="rounded-lg bg-orange-50/10 border border-orange-500/30 p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-orange-400 font-semibold">🚀 拉升操作进行中</span>
+                  <span className="text-orange-300">目标: +{pumpConfig.percentage}%</span>
+                </div>
+                <div className="text-xs text-orange-300 mt-1">
+                  使用 {pumpConfig.selectedWallets.length} 个钱包 |
+                  持续时间: {pumpConfig.duration}分钟 |
+                  当前价格: ${currentPrice}
+                </div>
+                <div className="text-xs text-orange-200 mt-2">
+                  目标价格: ${(parseFloat(currentPrice) * (1 + parseFloat(pumpConfig.percentage) / 100)).toFixed(6)}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -816,13 +1003,41 @@ const Trade = () => {
               </div>
             )}
 
-            <button
-              onClick={executeDump}
-              disabled={!selectedToken || isDumping || dumpConfig.selectedWallets.length === 0}
-              className="w-full rounded-md bg-red-600 cursor-pointer px-4 py-2 text-white hover:bg-red-700 disabled:opacity-50"
-            >
-              {isDumping ? '砸盘中...' : '开始砸盘'}
-            </button>
+            <div className="flex space-x-2">
+              <button
+                onClick={executeDump}
+                disabled={!selectedToken || isDumping || dumpConfig.selectedWallets.length === 0 || !dumpConfig.percentage || !dumpConfig.duration}
+                className="flex-1 rounded-md bg-red-600 cursor-pointer px-4 py-2 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {isDumping ? '砸盘中...' : '💥 开始砸盘'}
+              </button>
+              {isDumping && (
+                <button
+                  onClick={stopDump}
+                  className="rounded-md bg-gray-600 cursor-pointer px-4 py-2 text-white hover:bg-gray-700"
+                >
+                  停止
+                </button>
+              )}
+            </div>
+
+            {/* 砸盘状态显示 */}
+            {isDumping && (
+              <div className="rounded-lg bg-red-50/10 border border-red-500/30 p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-red-400 font-semibold">💥 砸盘操作进行中</span>
+                  <span className="text-red-300">目标: -{dumpConfig.percentage}%</span>
+                </div>
+                <div className="text-xs text-red-300 mt-1">
+                  使用 {dumpConfig.selectedWallets.length} 个钱包 |
+                  持续时间: {dumpConfig.duration}分钟 |
+                  当前价格: ${currentPrice}
+                </div>
+                <div className="text-xs text-red-200 mt-2">
+                  目标价格: ${(parseFloat(currentPrice) * (1 - parseFloat(dumpConfig.percentage) / 100)).toFixed(6)}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

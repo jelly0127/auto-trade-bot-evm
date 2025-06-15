@@ -6,12 +6,17 @@ import { type TokenPrice } from '@/lib/priceService';
 import { createTradeRecord, executeBlockchainTrade } from '@/utils/tradeUtils';
 import { defaultTradeConfig, getRpcUrl, MAINNET_CONFIG } from '@/config/tradeConfig';
 
+// 刷单模式类型
+type VolumeBotMode = 'INTERVAL' | 'BATCH_SELL';
+
 // 刷单配置
 interface VolumeConfig {
   enabled: boolean;
+  mode: VolumeBotMode;     // 模式：定时刷单 | 批量卖出
   interval: string;        // 刷单间隔（秒）
   minAmount: string;       // 最小交易金额
   maxAmount: string;       // 最大交易金额
+  sellPercentage: string;  // 批量卖出百分比
   selectedWallets: string[]; // 选中的钱包
   enableBuy: boolean;      // 启用买入
   enableSell: boolean;     // 启用卖出
@@ -35,9 +40,11 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
   // 刷单配置
   const [volumeConfig, setVolumeConfig] = useState<VolumeConfig>({
     enabled: false,
+    mode: 'INTERVAL',        // 默认定时刷单模式
     interval: '30',
     minAmount: '0.0001',
     maxAmount: '0.0002',
+    sellPercentage: '10',    // 默认卖出10%
     selectedWallets: [],
     enableBuy: true,         // 默认启用买入
     enableSell: true         // 默认启用卖出
@@ -76,6 +83,99 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
     toast.info('已取消选择所有钱包');
   };
 
+  // 批量卖出功能
+  const executeBatchSell = async () => {
+    if (!selectedToken || !hasWallets()) {
+      toast.error('请选择代币和钱包数据');
+      return;
+    }
+
+    if (volumeConfig.selectedWallets.length === 0) {
+      toast.error('请选择要执行批量卖出的钱包');
+      return;
+    }
+
+    const percentage = parseFloat(volumeConfig.sellPercentage);
+    if (percentage <= 0 || percentage > 100) {
+      toast.error('卖出百分比必须在1-100之间');
+      return;
+    }
+
+    const confirmMessage = `确认批量卖出操作？\n\n将对 ${volumeConfig.selectedWallets.length} 个钱包执行卖出 ${percentage}% 持仓的操作\n\n此操作不可撤销，请确认！`;
+
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    toast.info(`开始批量卖出 ${percentage}% 持仓，共 ${volumeConfig.selectedWallets.length} 个钱包`);
+
+    let successCount = 0;
+    let failCount = 0;
+
+    // 并发执行所有钱包的卖出操作
+    const promises = volumeConfig.selectedWallets.map(async (walletAddress, index) => {
+      try {
+        console.log(`🔄 [${index + 1}/${volumeConfig.selectedWallets.length}] 执行批量卖出: ${walletAddress.slice(0, 8)}... - ${percentage}%`);
+
+        // 执行卖出交易
+        const txHash = await executeBlockchainTrade({
+          tokenAddress: selectedToken!.address,
+          amount: percentage.toString(), // 传递百分比
+          tradeType: 'SELL',
+          walletPrivateKey: getWalletPrivateKey(walletAddress),
+          chainId: chainId
+        });
+
+        const trade = createTradeRecord({
+          type: 'BATCH_SELL',
+          amount: `${percentage}%`,
+          price: currentPrice,
+          wallet: walletAddress,
+          tokenAddress: selectedToken.address,
+          tokenSymbol: selectedToken.symbol,
+          chainId: chainId,
+          txHash: txHash,
+          status: 'success'
+        });
+
+        console.log(`✅ [${index + 1}] 批量卖出成功:`, trade);
+        onTradeExecuted(trade);
+        successCount++;
+
+        return { success: true, wallet: walletAddress, txHash };
+      } catch (error) {
+        console.error(`❌ [${index + 1}] 批量卖出失败:`, error);
+
+        const failedTrade = createTradeRecord({
+          type: 'BATCH_SELL',
+          amount: `${percentage}%`,
+          price: currentPrice,
+          wallet: walletAddress,
+          tokenAddress: selectedToken.address,
+          tokenSymbol: selectedToken.symbol,
+          chainId: chainId,
+          txHash: 'failed',
+          status: 'failed'
+        });
+
+        onTradeExecuted(failedTrade);
+        failCount++;
+
+        return { success: false, wallet: walletAddress, error };
+      }
+    });
+
+    // 等待所有交易完成
+    const results = await Promise.allSettled(promises);
+
+    // 显示结果统计
+    toast.success(`批量卖出完成！成功: ${successCount}笔，失败: ${failCount}笔`, {
+      duration: 5000
+    });
+
+    console.log(`📊 批量卖出统计: 成功 ${successCount}笔, 失败 ${failCount}笔`);
+  };
+
   // 开始刷单
   const startVolumeBot = async () => {
     if (!selectedToken || !hasWallets()) {
@@ -83,6 +183,13 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
       return;
     }
 
+    if (volumeConfig.mode === 'BATCH_SELL') {
+      // 批量卖出模式
+      await executeBatchSell();
+      return;
+    }
+
+    // 定时刷单模式
     if (!volumeConfig.enableBuy && !volumeConfig.enableSell) {
       toast.error('请至少选择买入或卖出其中一种交易类型');
       return;
@@ -207,70 +314,139 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
       <h2 className="text-lg font-semibold mb-4">刷单功能</h2>
 
       <div className="space-y-4">
-        {/* 交易类型选择 */}
+        {/* 模式切换 */}
         <div>
-          <label className="block text-sm font-medium mb-2">交易类型选择</label>
-          <div className="flex space-x-4">
-            <label className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={volumeConfig.enableBuy}
-                onChange={(e) => setVolumeConfig(prev => ({ ...prev, enableBuy: e.target.checked }))}
-                className="h-4 w-4 text-green-600 focus:ring-green-500 rounded"
-              />
-              <span className="text-sm text-green-400">🟢 买入</span>
-            </label>
-            <label className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={volumeConfig.enableSell}
-                onChange={(e) => setVolumeConfig(prev => ({ ...prev, enableSell: e.target.checked }))}
-                className="h-4 w-4 text-red-600 focus:ring-red-500 rounded"
-              />
-              <span className="text-sm text-red-400">🔴 卖出</span>
-            </label>
+          <label className="block text-sm font-medium mb-2">操作模式</label>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setVolumeConfig(prev => ({ ...prev, mode: 'INTERVAL' }))}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${volumeConfig.mode === 'INTERVAL'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+            >
+              🔄 定时刷单
+            </button>
+            <button
+              onClick={() => setVolumeConfig(prev => ({ ...prev, mode: 'BATCH_SELL' }))}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${volumeConfig.mode === 'BATCH_SELL'
+                ? 'bg-red-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+            >
+              📦 批量卖出
+            </button>
           </div>
-          {!volumeConfig.enableBuy && !volumeConfig.enableSell && (
-            <p className="text-xs text-yellow-400 mt-1">⚠️ 请至少选择一种交易类型</p>
-          )}
+          <div className="text-xs text-gray-400 mt-1">
+            {volumeConfig.mode === 'INTERVAL'
+              ? '按时间间隔自动执行买入/卖出交易'
+              : '一次性批量卖出指定百分比的持仓'
+            }
+          </div>
         </div>
 
-        {/* 基础配置 */}
-        <div>
-          <label className="block text-sm font-medium mb-1">交易间隔 (秒)</label>
-          <input
-            type="number"
-            placeholder="每次交易间隔"
-            value={volumeConfig.interval}
-            onChange={(e) => setVolumeConfig(prev => ({ ...prev, interval: e.target.value }))}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
+        {/* 定时刷单模式的配置 */}
+        {volumeConfig.mode === 'INTERVAL' && (
+          <>
+            {/* 交易类型选择 */}
+            <div>
+              <label className="block text-sm font-medium mb-2">交易类型选择</label>
+              <div className="flex space-x-4">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={volumeConfig.enableBuy}
+                    onChange={(e) => setVolumeConfig(prev => ({ ...prev, enableBuy: e.target.checked }))}
+                    className="h-4 w-4 text-green-600 focus:ring-green-500 rounded"
+                  />
+                  <span className="text-sm text-green-400">🟢 买入</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={volumeConfig.enableSell}
+                    onChange={(e) => setVolumeConfig(prev => ({ ...prev, enableSell: e.target.checked }))}
+                    className="h-4 w-4 text-red-600 focus:ring-red-500 rounded"
+                  />
+                  <span className="text-sm text-red-400">🔴 卖出</span>
+                </label>
+              </div>
+              {!volumeConfig.enableBuy && !volumeConfig.enableSell && (
+                <p className="text-xs text-yellow-400 mt-1">⚠️ 请至少选择一种交易类型</p>
+              )}
+            </div>
 
-        <div className="grid grid-cols-2 gap-2">
+            {/* 基础配置 */}
+            <div>
+              <label className="block text-sm font-medium mb-1">交易间隔 (秒)</label>
+              <input
+                type="number"
+                placeholder="每次交易间隔"
+                value={volumeConfig.interval}
+                onChange={(e) => setVolumeConfig(prev => ({ ...prev, interval: e.target.value }))}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm font-medium mb-1">最小金额</label>
+                <input
+                  type="number"
+                  step="0.0001"
+                  placeholder="最小交易金额"
+                  value={volumeConfig.minAmount}
+                  onChange={(e) => setVolumeConfig(prev => ({ ...prev, minAmount: e.target.value }))}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">最大金额</label>
+                <input
+                  type="number"
+                  step="0.0002"
+                  placeholder="最大交易金额"
+                  value={volumeConfig.maxAmount}
+                  onChange={(e) => setVolumeConfig(prev => ({ ...prev, maxAmount: e.target.value }))}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* 批量卖出模式的配置 */}
+        {volumeConfig.mode === 'BATCH_SELL' && (
           <div>
-            <label className="block text-sm font-medium mb-1">最小金额</label>
+            <label className="block text-sm font-medium mb-1">卖出百分比 (%)</label>
             <input
               type="number"
-              step="0.0001"
-              placeholder="最小交易金额"
-              value={volumeConfig.minAmount}
-              onChange={(e) => setVolumeConfig(prev => ({ ...prev, minAmount: e.target.value }))}
+              min="1"
+              max="100"
+              placeholder="输入卖出百分比 (1-100)"
+              value={volumeConfig.sellPercentage}
+              onChange={(e) => setVolumeConfig(prev => ({ ...prev, sellPercentage: e.target.value }))}
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
+            <div className="flex space-x-2 mt-2">
+              {[10, 25, 50, 75, 100].map(percent => (
+                <button
+                  key={percent}
+                  onClick={() => setVolumeConfig(prev => ({ ...prev, sellPercentage: percent.toString() }))}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${volumeConfig.sellPercentage === percent.toString()
+                    ? 'bg-red-600 text-white'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                >
+                  {percent}%
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              💡 将卖出每个钱包中 {volumeConfig.sellPercentage}% 的代币持仓
+            </p>
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">最大金额</label>
-            <input
-              type="number"
-              step="0.0002"
-              placeholder="最大交易金额"
-              value={volumeConfig.maxAmount}
-              onChange={(e) => setVolumeConfig(prev => ({ ...prev, maxAmount: e.target.value }))}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-        </div>
+        )}
 
         {/* 钱包选择 */}
         {hasWallets() && (
@@ -340,34 +516,50 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
         {/* 操作按钮 */}
         <div className="space-y-2">
           <div className="flex space-x-2">
-            <button
-              onClick={startVolumeBot}
-              disabled={
-                !hasWallets() ||
-                !selectedToken ||
-                isVolumeBot ||
-                volumeConfig.selectedWallets.length === 0 ||
-                (!volumeConfig.enableBuy && !volumeConfig.enableSell)
-              }
-              className="flex-1 rounded-md bg-purple-600 cursor-pointer px-4 py-2 text-white hover:bg-purple-700 disabled:opacity-50"
-            >
-              {isVolumeBot ? '刷单中...' : '开始刷单'}
-            </button>
-            {isVolumeBot && (
+            {volumeConfig.mode === 'INTERVAL' ? (
+              <>
+                <button
+                  onClick={startVolumeBot}
+                  disabled={
+                    !hasWallets() ||
+                    !selectedToken ||
+                    isVolumeBot ||
+                    volumeConfig.selectedWallets.length === 0 ||
+                    (!volumeConfig.enableBuy && !volumeConfig.enableSell)
+                  }
+                  className="flex-1 rounded-md bg-purple-600 cursor-pointer px-4 py-2 text-white hover:bg-purple-700 disabled:opacity-50"
+                >
+                  {isVolumeBot ? '刷单中...' : '🔄 开始定时刷单'}
+                </button>
+                {isVolumeBot && (
+                  <button
+                    onClick={stopVolumeBot}
+                    className="flex-1 rounded-md bg-gray-600 cursor-pointer px-4 py-2 text-white hover:bg-gray-700"
+                  >
+                    停止刷单
+                  </button>
+                )}
+              </>
+            ) : (
               <button
-                onClick={stopVolumeBot}
-                className="flex-1 rounded-md bg-gray-600 cursor-pointer px-4 py-2 text-white hover:bg-gray-700"
+                onClick={startVolumeBot}
+                disabled={
+                  !hasWallets() ||
+                  !selectedToken ||
+                  volumeConfig.selectedWallets.length === 0 ||
+                  parseFloat(volumeConfig.sellPercentage) <= 0 ||
+                  parseFloat(volumeConfig.sellPercentage) > 100
+                }
+                className="flex-1 rounded-md bg-red-600 cursor-pointer px-4 py-2 text-white hover:bg-red-700 disabled:opacity-50"
               >
-                停止刷单
+                📦 执行批量卖出 ({volumeConfig.sellPercentage}%)
               </button>
             )}
           </div>
-
-
         </div>
 
         {/* 状态显示 */}
-        {isVolumeBot && (
+        {isVolumeBot && volumeConfig.mode === 'INTERVAL' && (
           <div className="rounded-lg bg-purple-50/10 border border-purple-500/30 p-3">
             <div className="flex items-center justify-between text-sm">
               <span className="text-purple-400 font-semibold">🤖 刷单机器人运行中</span>
@@ -381,6 +573,21 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
             <div className="text-xs text-purple-200 mt-2 flex items-center justify-between">
               <span>已执行交易: <strong>{tradeCount}</strong> 笔</span>
               <span>运行时间: {Math.floor(tradeCount * parseInt(volumeConfig.interval) / 60)}分{(tradeCount * parseInt(volumeConfig.interval)) % 60}秒</span>
+            </div>
+          </div>
+        )}
+
+        {/* 批量卖出模式提示 */}
+        {volumeConfig.mode === 'BATCH_SELL' && (
+          <div className="rounded-lg bg-red-50/10 border border-red-500/30 p-3">
+            <div className="flex items-center text-sm">
+              <span className="text-red-400 font-semibold">📦 批量卖出模式</span>
+            </div>
+            <div className="text-xs text-red-300 mt-1">
+              将对 {volumeConfig.selectedWallets.length} 个钱包执行卖出 {volumeConfig.sellPercentage}% 持仓的操作
+            </div>
+            <div className="text-xs text-red-200 mt-2">
+              ⚠️ 此操作将立即执行，无时间间隔，请确认后再点击执行按钮
             </div>
           </div>
         )}

@@ -6,10 +6,14 @@ import { toast } from 'sonner';
 import { useTokenStorage, type StoredToken } from '@/hooks/useTokenStorage';
 import { priceService, type TokenPrice } from '@/lib/priceService';
 import { useWalletData } from '@/hooks/useWalletData';
+import NetworkSelector from './NetworkSelector';
+import { NetworkConfig } from '@/config/tradeConfig';
 
 interface TokenSelectorProps {
   address: `0x${string}` | undefined;
-
+  networkConfig: NetworkConfig;
+  selectedChainId: number;
+  handleNetworkChange: (chainId: number) => void;
   tokenAddress: string;
   setTokenAddress: (address: string) => void;
   selectedToken: TokenPrice | null;
@@ -18,7 +22,10 @@ interface TokenSelectorProps {
 
 const TokenSelector: React.FC<TokenSelectorProps> = ({
   address,
+  networkConfig,
   tokenAddress,
+  selectedChainId,
+  handleNetworkChange,
   setTokenAddress,
   selectedToken,
   onTokenSelect
@@ -105,15 +112,26 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
     <div className="rounded-lg grid grid-cols-4 gap-x-6 bg-[#FFFFFF1A] p-6 w-full ">
       {/* 钱包状态 */}
       <div className="col-span-1">
-        <h2 className="text-lg font-semibold mb-4">钱包状态</h2>
         <div className="space-y-2">
           <div className="flex flex-col justify-between">
             <span className="text-sm text-gray-400">主钱包:</span>
-            <span className="text-sm font-mono truncate">{address}</span>
+            <span className="text-sm font-mono truncate">{address?.slice(0, 8)}...{address?.slice(-6)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-sm text-gray-400">导入钱包:</span>
             <span className="text-sm font-semibold">{hasWallets() ? `${importedWallets.length}个` : '未导入'}</span>
+          </div>
+          {/* 网络选择器 */}
+          <div className="flex flex-col space-y-2">
+            <label className="text-sm font-medium text-gray-300">选择网络</label>
+            <NetworkSelector
+              selectedChainId={selectedChainId}
+              onNetworkChange={handleNetworkChange}
+              showTestnets={true}
+            />
+            <div className="text-xs text-gray-400">
+              当前: {networkConfig.name}
+            </div>
           </div>
           {!hasWallets() && (
             <p className="text-xs text-yellow-500 mt-2">
