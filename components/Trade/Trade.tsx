@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useChainId } from 'wagmi';
 import { toast } from 'sonner';
+import { getExplorerUrl, createTradeRecord, executeBlockchainTrade } from '@/utils/tradeUtils';
 import { useWalletData } from '@/hooks/useWalletData';
 import { useTradeHistory, type TradeRecord } from '@/hooks/useTradeHistory';
 import CandlestickChart from './CandlestickChart';
@@ -34,6 +35,8 @@ const Trade = () => {
     importHistory,
     historyCount
   } = useTradeHistory();
+
+
 
   // 代币状态
   const [selectedToken, setSelectedToken] = useState<TokenPrice | null>(null);
@@ -74,6 +77,8 @@ const Trade = () => {
 
   // 处理交易执行
   const handleTradeExecuted = (trade: any) => {
+    console.log('📊 接收到交易执行:', trade);
+
     // 转换为完整的交易记录格式
     const tradeRecord: Omit<TradeRecord, 'id'> = {
       type: trade.type,
@@ -81,13 +86,16 @@ const Trade = () => {
       price: trade.price,
       timestamp: trade.timestamp,
       wallet: trade.wallet,
-      tokenAddress: selectedToken?.address,
-      tokenSymbol: selectedToken?.symbol,
-      chainId: chainId,
-      status: 'success'
+      tokenAddress: selectedToken?.address || trade.tokenAddress,
+      tokenSymbol: selectedToken?.symbol || trade.tokenSymbol,
+      chainId: trade.chainId || chainId,
+      txHash: trade.txHash,
+      status: trade.status || 'success'
     };
 
+    console.log('💾 保存交易记录:', tradeRecord);
     addTrade(tradeRecord);
+    console.log('✅ 交易记录已添加，当前历史数量:', historyCount + 1);
   };
 
   // 拉升钱包选择切换
@@ -169,16 +177,53 @@ const Trade = () => {
       selectedWallets.forEach((walletAddress, i) => {
         const buyAmount = (Math.random() * 0.01 + 0.001).toFixed(6);
 
-        setTimeout(() => {
-          const trade = {
-            type: 'PUMP_BUY',
-            amount: buyAmount,
-            price: currentPrice,
-            timestamp: new Date().toLocaleString(),
-            wallet: walletAddress
-          };
-          handleTradeExecuted(trade);
-          toast.info(`钱包 ${walletAddress.slice(0, 8)}... 执行拉升买入 ${buyAmount}`, { duration: 2000 });
+        setTimeout(async () => {
+          try {
+            // 执行真实的区块链交易
+            const txHash = await executeBlockchainTrade({
+              tokenAddress: selectedToken!.address,
+              amount: buyAmount,
+              tradeType: 'BUY',
+              walletPrivateKey: 'YOUR_WALLET_PRIVATE_KEY', // 需要实现安全的私钥获取
+              chainId: chainId
+            });
+
+            const trade = createTradeRecord({
+              type: 'PUMP_BUY',
+              amount: buyAmount,
+              price: currentPrice,
+              wallet: walletAddress,
+              tokenAddress: selectedToken!.address,
+              tokenSymbol: selectedToken!.symbol,
+              chainId: chainId,
+              txHash: txHash,
+              status: 'success'
+            });
+
+            handleTradeExecuted(trade);
+            toast.success(`钱包 ${walletAddress.slice(0, 8)}... 拉升买入成功 ${buyAmount}`, {
+              duration: 2000,
+              description: `交易哈希: ${txHash.slice(0, 10)}...`
+            });
+          } catch (error) {
+            console.error('拉升交易失败:', error);
+
+            // 记录失败的交易
+            const failedTrade = createTradeRecord({
+              type: 'PUMP_BUY',
+              amount: buyAmount,
+              price: currentPrice,
+              wallet: walletAddress,
+              tokenAddress: selectedToken!.address,
+              tokenSymbol: selectedToken!.symbol,
+              chainId: chainId,
+              txHash: 'failed',
+              status: 'failed'
+            });
+
+            handleTradeExecuted(failedTrade);
+            toast.error(`钱包 ${walletAddress.slice(0, 8)}... 拉升买入失败`, { duration: 2000 });
+          }
         }, i * 2000);
       });
 
@@ -216,16 +261,53 @@ const Trade = () => {
       selectedWallets.forEach((walletAddress, i) => {
         const sellAmount = (Math.random() * 0.01 + 0.001).toFixed(6);
 
-        setTimeout(() => {
-          const trade = {
-            type: 'DUMP_SELL',
-            amount: sellAmount,
-            price: currentPrice,
-            timestamp: new Date().toLocaleString(),
-            wallet: walletAddress
-          };
-          handleTradeExecuted(trade);
-          toast.info(`钱包 ${walletAddress.slice(0, 8)}... 执行砸盘卖出 ${sellAmount}`, { duration: 2000 });
+        setTimeout(async () => {
+          try {
+            // 执行真实的区块链交易
+            const txHash = await executeBlockchainTrade({
+              tokenAddress: selectedToken!.address,
+              amount: sellAmount,
+              tradeType: 'SELL',
+              walletPrivateKey: 'YOUR_WALLET_PRIVATE_KEY', // 需要实现安全的私钥获取
+              chainId: chainId
+            });
+
+            const trade = createTradeRecord({
+              type: 'DUMP_SELL',
+              amount: sellAmount,
+              price: currentPrice,
+              wallet: walletAddress,
+              tokenAddress: selectedToken!.address,
+              tokenSymbol: selectedToken!.symbol,
+              chainId: chainId,
+              txHash: txHash,
+              status: 'success'
+            });
+
+            handleTradeExecuted(trade);
+            toast.success(`钱包 ${walletAddress.slice(0, 8)}... 砸盘卖出成功 ${sellAmount}`, {
+              duration: 2000,
+              description: `交易哈希: ${txHash.slice(0, 10)}...`
+            });
+          } catch (error) {
+            console.error('砸盘交易失败:', error);
+
+            // 记录失败的交易
+            const failedTrade = createTradeRecord({
+              type: 'DUMP_SELL',
+              amount: sellAmount,
+              price: currentPrice,
+              wallet: walletAddress,
+              tokenAddress: selectedToken!.address,
+              tokenSymbol: selectedToken!.symbol,
+              chainId: chainId,
+              txHash: 'failed',
+              status: 'failed'
+            });
+
+            handleTradeExecuted(failedTrade);
+            toast.error(`钱包 ${walletAddress.slice(0, 8)}... 砸盘卖出失败`, { duration: 2000 });
+          }
         }, i * 2000);
       });
 
@@ -351,9 +433,15 @@ const Trade = () => {
                   <div key={trade.id} className="rounded-lg border border-gray-700 p-3 text-xs">
                     <div className="flex justify-between items-center">
                       <div className="flex items-center space-x-2">
-                        <span className={`font-semibold ${trade.type.includes('BUY') ? 'text-green-500' : 'text-red-500'
+                        <span className={`font-semibold ${trade.type.includes('BUY') ? 'text-green-500' :
+                          trade.type.includes('SELL') ? 'text-red-500' :
+                            trade.type.includes('VOLUME') ? 'text-purple-500' :
+                              'text-orange-500'
                           }`}>
-                          {trade.type}
+                          {trade.type.includes('VOLUME') ?
+                            `🤖 ${trade.type.replace('VOLUME_', '')}` :
+                            trade.type
+                          }
                         </span>
                         {trade.tokenSymbol && (
                           <span className="text-blue-400 text-xs">
@@ -376,6 +464,41 @@ const Trade = () => {
                         <span>钱包:</span>
                         <span className="font-mono">{trade.wallet.slice(0, 8)}...</span>
                       </div>
+                      {trade.txHash && trade.txHash !== 'pending' && trade.txHash !== 'failed' && (
+                        <div className="flex justify-between items-center">
+                          <span>交易哈希:</span>
+                          <div className="flex items-center space-x-1">
+                            <span className="font-mono text-xs">{trade.txHash.slice(0, 8)}...{trade.txHash.slice(-8)}</span>
+                            <button
+                              onClick={() => {
+                                const explorerUrl = getExplorerUrl(trade.chainId || chainId, trade.txHash!);
+                                if (explorerUrl) {
+                                  window.open(explorerUrl, '_blank');
+                                } else {
+                                  navigator.clipboard.writeText(trade.txHash!);
+                                  toast.success('交易哈希已复制到剪贴板');
+                                }
+                              }}
+                              className="text-blue-400 hover:text-blue-300 text-xs"
+                              title={getExplorerUrl(trade.chainId || chainId, trade.txHash!) ? '在区块链浏览器中查看' : '复制交易哈希'}
+                            >
+                              {getExplorerUrl(trade.chainId || chainId, trade.txHash!) ? '🔗' : '📋'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {trade.txHash === 'failed' && (
+                        <div className="flex justify-between">
+                          <span>交易哈希:</span>
+                          <span className="text-red-400 text-xs">交易失败</span>
+                        </div>
+                      )}
+                      {trade.txHash === 'pending' && (
+                        <div className="flex justify-between">
+                          <span>交易哈希:</span>
+                          <span className="text-yellow-400 text-xs">等待确认...</span>
+                        </div>
+                      )}
                       {trade.status && (
                         <div className="flex justify-between">
                           <span>状态:</span>
