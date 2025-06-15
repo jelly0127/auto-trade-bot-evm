@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { useWalletData } from '@/hooks/useWalletData';
 import { type TokenPrice } from '@/lib/priceService';
 import { createTradeRecord, executeBlockchainTrade } from '@/utils/tradeUtils';
-import { defaultTradeConfig, getRpcUrl, MAINNET_CONFIG } from '../../config/tradeConfig';
+import { defaultTradeConfig, getRpcUrl, MAINNET_CONFIG } from '@/config/tradeConfig';
 
 // 刷单配置
 interface VolumeConfig {
@@ -21,12 +21,14 @@ interface VolumeBotProps {
   selectedToken: TokenPrice | null;
   currentPrice: string;
   onTradeExecuted: (trade: any) => void;
+  chainId: number;
 }
 
 const VolumeBot: React.FC<VolumeBotProps> = ({
   selectedToken,
   currentPrice,
-  onTradeExecuted
+  onTradeExecuted,
+  chainId
 }) => {
   const { wallets: importedWallets, hasWallets } = useWalletData();
 
@@ -35,7 +37,7 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
     enabled: false,
     interval: '30',
     minAmount: '0.0001',
-    maxAmount: '1000000',
+    maxAmount: '0.0002',
     selectedWallets: [],
     enableBuy: true,         // 默认启用买入
     enableSell: true         // 默认启用卖出
@@ -120,7 +122,7 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
           amount: randomAmount,
           tradeType: tradeType,
           walletPrivateKey: getWalletPrivateKey(randomWallet),
-          chainId: 56 // BSC 主网
+          chainId: chainId
         });
 
         const trade = createTradeRecord({
@@ -130,7 +132,7 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
           wallet: randomWallet,
           tokenAddress: selectedToken.address,
           tokenSymbol: selectedToken.symbol,
-          chainId: 56,
+          chainId: chainId,
           txHash: txHash,
           status: 'success'
         });
@@ -157,7 +159,7 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
           wallet: randomWallet,
           tokenAddress: selectedToken.address,
           tokenSymbol: selectedToken.symbol,
-          chainId: 56,
+          chainId: chainId,
           txHash: 'failed',
           status: 'failed'
         });
@@ -261,7 +263,7 @@ const VolumeBot: React.FC<VolumeBotProps> = ({
             <label className="block text-sm font-medium mb-1">最大金额</label>
             <input
               type="number"
-              step="1000000"
+              step="0.0002"
               placeholder="最大交易金额"
               value={volumeConfig.maxAmount}
               onChange={(e) => setVolumeConfig(prev => ({ ...prev, maxAmount: e.target.value }))}

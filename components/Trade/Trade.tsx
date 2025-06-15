@@ -11,8 +11,10 @@ import PriceStrategy from './PriceStrategy';
 import VolumeBot from './VolumeBot';
 import TradeHistoryStats from './TradeHistoryStats';
 import NetworkStatusComponent from './NetworkStatus';
+import NetworkSelector from './NetworkSelector';
 import ApiStatus from './ApiStatus';
 import { priceService, type TokenPrice, type CandleData, formatPrice } from '@/lib/priceService';
+import { getNetworkConfig } from '@/config/tradeConfig';
 
 // 拉升/砸盘配置
 interface PumpDumpConfig {
@@ -24,7 +26,7 @@ interface PumpDumpConfig {
 
 const Trade = () => {
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
+  const wagmiChainId = useChainId();
   const { wallets: importedWallets, hasWallets } = useWalletData();
   const {
     tradeHistory,
@@ -36,7 +38,9 @@ const Trade = () => {
     historyCount
   } = useTradeHistory();
 
-
+  // 网络状态 - 独立于wagmi的链ID管理
+  const [selectedChainId, setSelectedChainId] = useState<number>(56); // 默认BSC主网
+  const [networkConfig, setNetworkConfig] = useState(() => getNetworkConfig(56));
 
   // 代币状态
   const [selectedToken, setSelectedToken] = useState<TokenPrice | null>(null);
@@ -60,6 +64,27 @@ const Trade = () => {
     selectedWallets: []
   });
 
+  // 处理网络切换
+  const handleNetworkChange = (chainId: number) => {
+    setSelectedChainId(chainId);
+    const newNetworkConfig = getNetworkConfig(chainId);
+    setNetworkConfig(newNetworkConfig);
+
+    // 清除当前选择的代币，因为不同网络的代币不同
+    setSelectedToken(null);
+    setCurrentPrice('0');
+    setPriceData([]);
+
+    // 停止价格订阅
+    if (selectedToken) {
+      priceService.unsubscribeFromPrice(selectedToken.address, (price) => {
+        setCurrentPrice(formatPrice(price));
+      });
+    }
+
+    console.log(`🌐 网络已切换到: ${newNetworkConfig.name} (${chainId})`);
+  };
+
   // 处理代币选择
   const handleTokenSelect = async (token: TokenPrice) => {
     setSelectedToken(token);
@@ -69,10 +94,10 @@ const Trade = () => {
     const candleData = await priceService.getCandleData(token.address);
     setPriceData(candleData);
 
-    // 启动价格订阅
+    // 启动价格订阅 - 使用选择的链ID
     priceService.subscribeToPrice(token.address, (price) => {
       setCurrentPrice(formatPrice(price));
-    }, 5000, chainId);
+    }, 5000, selectedChainId);
   };
 
   // 处理交易执行
@@ -88,7 +113,7 @@ const Trade = () => {
       wallet: trade.wallet,
       tokenAddress: selectedToken?.address || trade.tokenAddress,
       tokenSymbol: selectedToken?.symbol || trade.tokenSymbol,
-      chainId: trade.chainId || chainId,
+      chainId: trade.chainId || selectedChainId, // 使用选择的链ID
       txHash: trade.txHash,
       status: trade.status || 'success'
     };
@@ -185,7 +210,7 @@ const Trade = () => {
               amount: buyAmount,
               tradeType: 'BUY',
               walletPrivateKey: 'YOUR_WALLET_PRIVATE_KEY', // 需要实现安全的私钥获取
-              chainId: chainId
+              chainId: selectedChainId
             });
 
             const trade = createTradeRecord({
@@ -195,7 +220,7 @@ const Trade = () => {
               wallet: walletAddress,
               tokenAddress: selectedToken!.address,
               tokenSymbol: selectedToken!.symbol,
-              chainId: chainId,
+              chainId: selectedChainId,
               txHash: txHash,
               status: 'success'
             });
@@ -216,7 +241,7 @@ const Trade = () => {
               wallet: walletAddress,
               tokenAddress: selectedToken!.address,
               tokenSymbol: selectedToken!.symbol,
-              chainId: chainId,
+              chainId: selectedChainId,
               txHash: 'failed',
               status: 'failed'
             });
@@ -269,7 +294,7 @@ const Trade = () => {
               amount: sellAmount,
               tradeType: 'SELL',
               walletPrivateKey: 'YOUR_WALLET_PRIVATE_KEY', // 需要实现安全的私钥获取
-              chainId: chainId
+              chainId: selectedChainId
             });
 
             const trade = createTradeRecord({
@@ -279,7 +304,7 @@ const Trade = () => {
               wallet: walletAddress,
               tokenAddress: selectedToken!.address,
               tokenSymbol: selectedToken!.symbol,
-              chainId: chainId,
+              chainId: selectedChainId,
               txHash: txHash,
               status: 'success'
             });
@@ -300,7 +325,7 @@ const Trade = () => {
               wallet: walletAddress,
               tokenAddress: selectedToken!.address,
               tokenSymbol: selectedToken!.symbol,
-              chainId: chainId,
+              chainId: selectedChainId,
               txHash: 'failed',
               status: 'failed'
             });
@@ -345,17 +370,31 @@ const Trade = () => {
     <div className="mx-auto h-full w-full px-6 max-w-[1280px]">
 
 
-      {/* 代币选择和钱包状态 */}
-      <div className='flex flex-row gap-x-6'>
-        <TokenSelector
-          address={address}
-          tokenAddress={tokenAddress}
-          setTokenAddress={setTokenAddress}
-          selectedToken={selectedToken}
-          onTokenSelect={handleTokenSelect}
-        />
+      {/* 网络选择和代币选择 */}
+      <div className='flex flex-row gap-x-6 items-start'>
+        {/* 网络选择器 */}
+        <div className="flex flex-col space-y-2">
+          <label className="text-sm font-medium text-gray-300">选择网络</label>
+          <NetworkSelector
+            selectedChainId={selectedChainId}
+            onNetworkChange={handleNetworkChange}
+            showTestnets={true}
+          />
+          <div className="text-xs text-gray-400">
+            当前: {networkConfig.name}
+          </div>
+        </div>
 
-
+        {/* 代币选择器 */}
+        <div className="flex-1">
+          <TokenSelector
+            address={address}
+            tokenAddress={tokenAddress}
+            setTokenAddress={setTokenAddress}
+            selectedToken={selectedToken}
+            onTokenSelect={handleTokenSelect}
+          />
+        </div>
       </div>
 
       <div className='flex flex-row w-full gap-x-5 mt-6 justify-between'>
@@ -375,7 +414,7 @@ const Trade = () => {
                 if (selectedToken) {
                   priceService.subscribeToPrice(selectedToken.address, (price) => {
                     setCurrentPrice(formatPrice(price));
-                  }, interval * 1000, chainId);
+                  }, interval * 1000, selectedChainId);
                 }
               }}
             />
@@ -471,7 +510,7 @@ const Trade = () => {
                             <span className="font-mono text-xs">{trade.txHash.slice(0, 8)}...{trade.txHash.slice(-8)}</span>
                             <button
                               onClick={() => {
-                                const explorerUrl = getExplorerUrl(trade.chainId || chainId, trade.txHash!);
+                                const explorerUrl = getExplorerUrl(trade.chainId || selectedChainId, trade.txHash!);
                                 if (explorerUrl) {
                                   window.open(explorerUrl, '_blank');
                                 } else {
@@ -480,9 +519,9 @@ const Trade = () => {
                                 }
                               }}
                               className="text-blue-400 hover:text-blue-300 text-xs"
-                              title={getExplorerUrl(trade.chainId || chainId, trade.txHash!) ? '在区块链浏览器中查看' : '复制交易哈希'}
+                              title={getExplorerUrl(trade.chainId || selectedChainId, trade.txHash!) ? '在区块链浏览器中查看' : '复制交易哈希'}
                             >
-                              {getExplorerUrl(trade.chainId || chainId, trade.txHash!) ? '🔗' : '📋'}
+                              {getExplorerUrl(trade.chainId || selectedChainId, trade.txHash!) ? '🔗' : '📋'}
                             </button>
                           </div>
                         </div>
@@ -580,6 +619,7 @@ const Trade = () => {
             selectedToken={selectedToken}
             currentPrice={currentPrice}
             onTradeExecuted={handleTradeExecuted}
+            chainId={selectedChainId}
           />
         </div>
 
@@ -591,6 +631,7 @@ const Trade = () => {
             selectedToken={selectedToken}
             currentPrice={currentPrice}
             onTradeExecuted={handleTradeExecuted}
+            chainId={selectedChainId}
           />
 
         </div>

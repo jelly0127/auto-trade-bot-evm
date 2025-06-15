@@ -19,14 +19,15 @@ interface PriceStrategyProps {
   selectedToken: TokenPrice | null;
   currentPrice: string;
   onTradeExecuted: (trade: any) => void;
+  chainId: number;
 }
 
 const PriceStrategy: React.FC<PriceStrategyProps> = ({
   selectedToken,
   currentPrice,
-  onTradeExecuted
+  onTradeExecuted,
+  chainId
 }) => {
-  const chainId = useChainId();
   const { wallets: importedWallets, hasWallets } = useWalletData();
 
   // 价格控制策略
